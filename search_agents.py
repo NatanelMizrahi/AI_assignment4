@@ -4,7 +4,6 @@ import itertools
 from numpy import random
 
 UNKNOWN = None
-StateT = TypeVar('State')
 Action = Union['TERMINATE', EvacuateNode]
 Ternary = Union[bool, UNKNOWN]
 
@@ -25,39 +24,17 @@ def get_all_options(domain, n):
     return itertools.product(domain, repeat=n)
 
 
-class State:
-    STATES: Dict[StateT, StateT] = {}
-    G: Graph
-    edge_to_index: Dict[Edge, int]
-    node_to_index: Dict[Node, int]
-
-
-    @staticmethod
-    def register_state(state):
-        State.STATES[state] = state
-
-    @staticmethod
-    def get_state(state):
-        return State.STATES[state]
-
-    @staticmethod
-    def get_initial_state(loc):
-        n_blockable = len(State.G.get_blockable_edges())
-        n_saveable = len(State.G.get_evac_nodes())
-        p = (False,) * n_saveable
-        e = (UNKNOWN,) * n_blockable
-        return State.get_state((loc, p, e, p, p, 0, False))
-
-    @staticmethod
-    def init_state_space(G: Graph):
-        State.G = G
-        evac_nodes = G.get_evac_nodes()
-        blockable_edges = G.get_blockable_edges()
-        State.node_to_index = {v: i for i, v in enumerate(evac_nodes)}
-        State.edge_to_index = {e: i for i, e in enumerate(blockable_edges)}
+class BeliefStateSpace:
+    def __init__(self, G: Graph):
+        self.G = G
+        self.STATES: Dict[State, State] = {}
+        self.evac_nodes = G.get_evac_nodes()
+        self.blockable_edges = G.get_blockable_edges()
+        n_evacuate_nodes = len(self.evac_nodes)
+        n_blockable_edges = len(self.blockable_edges)
+        self.node_to_index = {v: i for i, v in enumerate(self.evac_nodes)}
+        self.edge_to_index = {e: i for i, e in enumerate(self.blockable_edges)}
         max_deadline = G.get_max_deadline() + 1
-        n_evacuate_nodes = len(evac_nodes)
-        n_blockable_edges = len(blockable_edges)
         # order matters. For each simulation tick in reverse order, first generate the states where the agent is terminated, then the ones where it is active
         #TODO: prune impossible states
         for t in reversed(range(max_deadline)):
@@ -67,37 +44,26 @@ class State:
                         for block_states in get_all_options([True, False, UNKNOWN], n_blockable_edges):
                             for carrying_state in get_all_options([True, False], n_evacuate_nodes):
                                 for saved_state in get_all_options([True, False], n_evacuate_nodes):
-                                    s = State(loc, evacuees_state, block_states, carrying_state, saved_state, t, term)
-                                    State.register_state(s)
+                                    s = State(self, loc, evacuees_state, block_states, carrying_state, saved_state, t, term)
+                                    self.register_state(s)
 
-    def reward(self):
-        if not self.terminated:
-            return 0
-        total = 0
-        for saved, v in zip(self.saved_state, self.G.get_evac_nodes()):
-            if saved:
-                total += v.n_people
-        return total
+    def register_state(self, state):
+        self.STATES[state] = state
 
-    def is_reachable(self, v):
-        e = self.G.get_edge(self.loc, v)
-        return self.time + e.w <= v.deadline
+    def get_state(self, state):
+        return self.STATES[state]
 
-    def is_reachable_shelter(self, v):
-        return self.is_reachable(v) and v.is_shelter()
+    def get_initial_state(self, loc):
+        n_blockable = len(self.blockable_edges)
+        n_saveable  = len(self.evac_nodes)
+        p = (False,) * n_saveable
+        e = (UNKNOWN,) * n_blockable
+        return self.get_state((loc, p, e, p, p, 0, False))
 
-    def result(self, action: Action):
-        if action == 'TERMINATE':
-            return self.transitions['TERMINATE'][1]
-        dest = action
-        possible_results = self.transitions[dest]
-        if len(possible_results) == 1:
-            return possible_results[0][1]
-        # randomize successor state with the given blockage distribution
-        probabilities, results = zip(*possible_results)
-        return random.choice(results, p=probabilities)
 
+class State:
     def __init__(self,
+                 state_space: BeliefStateSpace,
                  loc: EvacuateNode,
                  evacuees_state:    Tuple[bool],
                  block_states:      Tuple[Ternary],
@@ -105,6 +71,7 @@ class State:
                  saved_state:       Tuple[bool],
                  time: int,
                  terminated: bool):
+        self.state_space = state_space
         self.loc = loc
         self.evacuees_state = evacuees_state
         self.block_states = block_states
@@ -112,10 +79,11 @@ class State:
         self.saved_state = saved_state
         self.time = time
         self.terminated = terminated
-        # a dict of actions and their possible result states and their probabilities for occurring
-        self.transitions: Dict[Action, List[Tuple[float, StateT]]] = self.get_transitions()
+
+        # a dict of actions and their possible get_action_result states and their probabilities for occurring
+        self.expected_utility = float('-0.1')
+        self.transitions: Dict[Action, List[Tuple[float, State]]] = self.get_transitions()
         # find the best move from this state to maximize expected utility
-        self.expected_utility = '?'
         self.best_option, self.expected_utility = self.get_best_action()
 
     def __iter__(self):
@@ -131,8 +99,8 @@ class State:
         return tuple(self) == tuple(other)
 
     def __repr__(self):
-        blockable = State.G.get_blockable_edges()
-        saveable = State.G.get_evac_nodes()
+        blockable = self.state_space.G.get_blockable_edges()
+        saveable = self.state_space.G.get_evac_nodes()
 
         return repr((self.loc,
                     zip2(saveable,  self.evacuees_state, 'P:'),
@@ -146,26 +114,69 @@ class State:
     def __hash__(self):
         return hash(tuple(self))
 
+    # Methods used to update the graph
+    def get_total_num_people(self, sub_state):
+        """get the total number of people picked up/carried/saved ( depending on the sub-state)"""
+        total = 0
+        for to_add, v in zip(sub_state, self.state_space.evac_nodes):
+            if to_add:
+                total += v.n_people_initial
+        return total
+
+    def get_total_saved(self):
+        return self.get_total_num_people(self.saved_state)
+
+    def get_total_carrying(self):
+        return self.get_total_num_people(self.carrying_state)
+
+    def update_graph(self):
+        for v, i in self.state_space.node_to_index.items():
+            v.n_people = 0 if self.evacuees_state[i] is True else v.n_people_initial
+        for e, i in self.state_space.edge_to_index.items():
+            e.blocked = self.block_states[i]
+    #
+
+    def get_action_result(self, action: Action):
+        if action == 'TERMINATE':
+            return self.transitions['TERMINATE'][0][1]
+        dest = action
+        possible_results = self.transitions[dest]
+        if len(possible_results) == 1:
+            return possible_results[0][1]
+        # randomize successor state with the given blockage distribution
+        probabilities, results = zip(*possible_results)
+        return random.choice(results, p=probabilities)
+
+    def is_reachable(self, v):
+        e = self.state_space.G.get_edge(self.loc, v)
+        return self.time + e.w <= v.deadline
+
+    def is_reachable_shelter(self, v):
+        return self.is_reachable(v) and v.is_shelter()
+
     def get_transition_evacuees_state(self, v):
         current = self.evacuees_state
         # v can be evacuated
-        if v in State.node_to_index:
+        if v in self.state_space.node_to_index:
             new_state = list(current)
             # traversing to v means we picked up the people in it (now or before)
-            node_state_tuple_idx = State.node_to_index[v]
+            node_state_tuple_idx = self.state_space.node_to_index[v]
             new_state[node_state_tuple_idx] = True  # True: people in node were picked up
             return tuple(new_state)
         return current
 
     def get_transition_carrying_state(self, v):
         current = self.carrying_state
-        # v can be evacuated
-        if v in State.node_to_index:
+        # arriving at a shelter drops off all currently carried evacuees
+        if self.is_reachable_shelter(v):
+            return (False,) * len(self.state_space.evac_nodes)
+        # if v can be evacuated
+        if v in self.state_space.node_to_index:
             new_state = list(current)
             # traversing to v means we are carrying the people in it, unless previously saved or arriving at a shelter
-            node_state_tuple_idx = State.node_to_index[v]
+            node_state_tuple_idx = self.state_space.node_to_index[v]
             previously_saved = self.saved_state[node_state_tuple_idx]
-            new_state[node_state_tuple_idx] = (not self.is_reachable_shelter(v)) and (not previously_saved)  # True: carrying the people initially in node
+            new_state[node_state_tuple_idx] = not previously_saved  # True: carrying the people initially in node
             return tuple(new_state)
         return current
 
@@ -177,8 +188,8 @@ class State:
 
     def path_unblocked(self, v):
         u = self.loc
-        e: Edge = self.G.get_edge(u, v)
-        idx = State.edge_to_index.get(e)
+        e: Edge = self.state_space.G.get_edge(u, v)
+        idx = self.state_space.edge_to_index.get(e)
         if idx is None:
             # edge cannot be blocked
             return True
@@ -193,7 +204,7 @@ class State:
         new_state_possibilities = []
         current = list(self.block_states)
         determined_indices = []  # which edges in the blocked state tuple are now determined after traversing to v.
-        for e, idx in State.edge_to_index.items():
+        for e, idx in self.state_space.edge_to_index.items():
             if e.contains(v) and self.block_states[idx] == UNKNOWN:
                 determined_indices.append((idx, e.block_chance))
         if len(determined_indices) == 0:
@@ -214,7 +225,7 @@ class State:
         return new_state_possibilities
 
     def terminated_transition(self):
-        return State.get_state((self.loc, self.evacuees_state, self.block_states, self.carrying_state, self.saved_state, self.time, True))
+        return self.state_space.get_state((self.loc, self.evacuees_state, self.block_states, self.carrying_state, self.saved_state, self.time, True))
 
     def get_transitions(self):
         transitions = {}
@@ -223,26 +234,37 @@ class State:
         u = self.loc
         transitions['TERMINATE'] = [(1, self.terminated_transition())]
         # for every unblocked road to neighbour, add all the possible transitions and their probabilities
-        for v in self.G.neighbours(u):
+        for v in self.state_space.G.neighbours(u):
             if self.path_unblocked(v):
                 if self.is_reachable(v):
-                    e = self.G.get_edge(u, v)
+                    e = self.state_space.G.get_edge(u, v)
                     transitions[v] = []
+                    new_evacuees_state = self.get_transition_evacuees_state(v)
+
+                    if repr(self) == "('V5', 'P:[V3:T, V4:T]', 'B:[E3:F]', 'C:[V3:F, V4:F]', 'S:[V3:T, V4:T]', 't=7', 'T:F', 'EU=-0.1')":
+                        print(d(False))
+                    new_carrying_state = self.get_transition_carrying_state(v)
+                    new_saved_state = self.get_transition_saved_state(v)
                     # get probability of blocked/ unblocked state combinations for each road connected to v
                     for prob, block_state_possibility in self.get_transition_blocked_state(v):
                         key = (v,
-                               self.get_transition_evacuees_state(v),
+                               new_evacuees_state,
                                block_state_possibility,
-                               self.get_transition_carrying_state(v),
-                               self.get_transition_saved_state(v),
+                               new_carrying_state,
+                               new_saved_state,
                                self.time + e.w,
                                False)
-                        result_state = State.get_state(key)
+                        result_state = self.state_space.get_state(key)
                         transitions[v].append((prob, result_state))
                 else:
                     # if cannot reach destination before deadline, terminate.
                     transitions[v] = transitions['TERMINATE']
         return transitions
+
+    def reward(self):
+        if not self.terminated:
+            return 0
+        return self.get_total_saved()
 
     def get_best_action(self):
         current_reward = self.reward()  # reward for the current state
@@ -255,8 +277,5 @@ class State:
             if best_score < expected_action_utility:
                 best_score = expected_action_utility
                 best_action = action
-        # if repr(self) == "('V3', 'P:[V3:T, V4:F]', \"B:[('V3', 'V4', 3):?]\", 'C:[V3:F, V4:T]', 'S:[V3:F, V4:F]', 't=0', 'T:F', 'EU=?')":
-        #     print('t')
-        # print(self, best_action, best_score)
         return best_action, best_score
 

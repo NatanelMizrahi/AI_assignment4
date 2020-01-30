@@ -34,7 +34,7 @@ class Edge:
         self.v1 = v1
         self.v2 = v2
         self.w = w
-        self.blocked = False
+        self.blocked = None
         self.block_chance = block_chance
 
     def get(self):
@@ -51,7 +51,8 @@ class Edge:
         # return (self.v1, self.v2) < (other.v1, other.v2)
 
     def __str__(self):
-        return str((self.v1.label, self.v2.label, self.w))
+        return self.label
+        # return str((self.v1.label, self.v2.label, self.w))
 
     def __repr__(self):
         return '({},{})'.format(self.v1.label, self.v2.label)
@@ -122,8 +123,14 @@ class Graph:
         if self.pos is None:
             # save node position to maintain the same graph layout throughout simulations
             self.pos = nx.spring_layout(G, scale=25)
-            # self.pos = nx.spectral_layout(G, scale=25)
-        edge_labels = {k: '{},w={}{}'.format(e.label, e.w, '({})'.format(e.block_chance) if e.block_chance else '') for k, e in self.Adj.items()}
+        edge_labels = {}
+        for k, e in self.Adj.items():
+            block_chance = '({})'.format(e.block_chance) if e.block_chance > 0 else ''
+            block_state = ''
+            if e.block_chance > 0:
+                block_state = '[Y]' if e.blocked else '[N]' if e.blocked is False else '[?]'
+            edge_labels[k] = '{},w={}'.format(e.label, e.w) + block_chance + block_state
+
         nx.draw_networkx_edge_labels(G, self.pos, edge_labels=edge_labels, rotate=False, font_size=6)
 
         nx.draw(G, self.pos, node_size=1700, with_labels=False)
@@ -151,7 +158,7 @@ class EvacuateNode(Node):
         self.n_people = n_people
         self.n_people_initial = n_people
         self.evacuated = (n_people == 0)
-        self.agents = []
+        self.agents = set([])
 
     def is_shelter(self):
         return False
