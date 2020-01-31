@@ -1,94 +1,88 @@
-from graph import Graph, Edge, Node, EvacuateNode
-from typing import Dict, List, Tuple, TypeVar, Union
-import itertools
+from graph import Graph, Edge, EvacuateNode
+from typing import Dict, List, Tuple, Union
 from numpy import random
+import itertools
+import tree
 
+CHARS = "0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"
+base = len(CHARS)
+TERMINATE = None
 UNKNOWN = None
-Action = Union['TERMINATE', EvacuateNode]
+DECIMALS = 4
+Action = Union[EvacuateNode, TERMINATE]
 Ternary = Union[bool, UNKNOWN]
 
 
-def rnd(frac):
-    return round(frac, 4)
+def to_base(n, base):
+    return "0" if not n else to_base(n // base, base).lstrip("0") + CHARS[n % base]
 
 
+def ID(v):
+    """appends a unique ID to string - used to generate unique tree nodes"""
+    try:
+        ID.ID += 1
+    except AttributeError:
+        ID.ID = 1
+    return '{}|{}'.format(v, to_base(ID.ID, base))
+
+
+def vectorize(func):
+    """allows a function to operate on a single element or a list/tuple"""
+    def each(f, args):
+        return [f(arg) for arg in args]
+
+    def inner(*args):
+        if type(*args) in [list, tuple]:
+            output = each(func, *args)
+        else:
+            output = func(*args)
+        return output
+    return inner
+
+@vectorize
 def d(v):
-    return '?' if v is UNKNOWN else str(v)[0]
+    """shorthand for boolean and UNKKNOWN: True=T,False=F,UNKNOWN=?"""
+    return '?' if v is None else str(v)[0]
 
 
 def zip2(keys, values, description=''):
-    return description + '[' + ', '.join(['{}:{}'.format(k, d(v)) for k, v in zip(keys, values)]) + ']'
+    """merges 2 lists to a string with an optional description"""
+    return description + '[' + ', '.join(['{}:{}'.format(k, v) for k, v in zip(keys, d(values))]) + ']'
 
 
 def get_all_options(domain, n):
+    """all combinations of {domain items}^n"""
     return itertools.product(domain, repeat=n)
-
-
-class BeliefStateSpace:
-    def __init__(self, G: Graph):
-        self.G = G
-        self.STATES: Dict[State, State] = {}
-        self.evac_nodes = G.get_evac_nodes()
-        self.blockable_edges = G.get_blockable_edges()
-        n_evacuate_nodes = len(self.evac_nodes)
-        n_blockable_edges = len(self.blockable_edges)
-        self.node_to_index = {v: i for i, v in enumerate(self.evac_nodes)}
-        self.edge_to_index = {e: i for i, e in enumerate(self.blockable_edges)}
-        max_deadline = G.get_max_deadline() + 1
-        # order matters. For each simulation tick in reverse order, first generate the states where the agent is terminated, then the ones where it is active
-        #TODO: prune impossible states
-        for t in reversed(range(max_deadline)):
-            for term in [True, False]:
-                for loc in G.get_vertices():
-                    for evacuees_state in get_all_options([True, False], n_evacuate_nodes):
-                        for block_states in get_all_options([True, False, UNKNOWN], n_blockable_edges):
-                            for carrying_state in get_all_options([True, False], n_evacuate_nodes):
-                                for saved_state in get_all_options([True, False], n_evacuate_nodes):
-                                    s = State(self, loc, evacuees_state, block_states, carrying_state, saved_state, t, term)
-                                    self.register_state(s)
-
-    def register_state(self, state):
-        self.STATES[state] = state
-
-    def get_state(self, state):
-        return self.STATES[state]
-
-    def get_initial_state(self, loc):
-        n_blockable = len(self.blockable_edges)
-        n_saveable  = len(self.evac_nodes)
-        p = (False,) * n_saveable
-        e = (UNKNOWN,) * n_blockable
-        return self.get_state((loc, p, e, p, p, 0, False))
 
 
 class State:
     def __init__(self,
-                 state_space: BeliefStateSpace,
+                 state_space,
                  loc: EvacuateNode,
-                 evacuees_state:    Tuple[bool],
+                 pickup_state:    Tuple[bool],
                  block_states:      Tuple[Ternary],
                  carrying_state:    Tuple[bool],
                  saved_state:       Tuple[bool],
                  time: int,
                  terminated: bool):
-        self.state_space = state_space
+        self.state_space: BeliefStateSpace = state_space  # containing belief state space
         self.loc = loc
-        self.evacuees_state = evacuees_state
+        self.pickup_state = pickup_state
         self.block_states = block_states
         self.carrying_state = carrying_state
         self.saved_state = saved_state
         self.time = time
         self.terminated = terminated
 
-        # a dict of actions and their possible get_action_result states and their probabilities for occurring
-        self.expected_utility = float('-0.1')
+        # a dict of actions and their possible result states, with their probabilities for occurring
         self.transitions: Dict[Action, List[Tuple[float, State]]] = self.get_transitions()
         # find the best move from this state to maximize expected utility
         self.best_option, self.expected_utility = self.get_best_action()
 
     def __iter__(self):
+        """used to represent each state as a tuple"""
         yield self.loc
-        yield self.evacuees_state
+        yield self.pickup_state
         yield self.block_states
         yield self.carrying_state
         yield self.saved_state
@@ -99,20 +93,32 @@ class State:
         return tuple(self) == tuple(other)
 
     def __repr__(self):
-        blockable = self.state_space.G.get_blockable_edges()
-        saveable = self.state_space.G.get_evac_nodes()
+        blockable = self.state_space.blockable_edges
+        saveable = self.state_space.evac_nodes
 
         return repr((self.loc,
-                    zip2(saveable,  self.evacuees_state, 'P:'),
+                    zip2(saveable,  self.pickup_state,   'P:'),
                     zip2(blockable, self.block_states,   'B:'),
                     zip2(saveable,  self.carrying_state, 'C:'),
                     zip2(saveable,  self.saved_state,    'S:'),
                     't=' + str(self.time),
                     'T:' + d(self.terminated),
-                    'EU=' + str(rnd(self.expected_utility))))
+                    'EU=' + str(round(self.expected_utility, DECIMALS))))
 
     def __hash__(self):
         return hash(tuple(self))
+
+    def compact(self):
+        """state representation for policy tree"""
+        return '({})'.format(','.join(str(e) for e in
+                    [self.loc,
+                    d(self.pickup_state),
+                    d(self.block_states),
+                    d(self.carrying_state),
+                    d(self.saved_state),
+                    self.time,
+                    d(self.terminated),
+                    str(round(self.expected_utility, 2))]).replace(' ', ''))
 
     # Methods used to update the graph
     def get_total_num_people(self, sub_state):
@@ -131,14 +137,15 @@ class State:
 
     def update_graph(self):
         for v, i in self.state_space.node_to_index.items():
-            v.n_people = 0 if self.evacuees_state[i] is True else v.n_people_initial
+            v.n_people = 0 if self.pickup_state[i] is True else v.n_people_initial
         for e, i in self.state_space.edge_to_index.items():
             e.blocked = self.block_states[i]
     #
 
     def get_action_result(self, action: Action):
-        if action == 'TERMINATE':
-            return self.transitions['TERMINATE'][0][1]
+        """produces a real world state after taking the action"""
+        if action is TERMINATE:
+            return self.transitions[TERMINATE][0][1]
         dest = action
         possible_results = self.transitions[dest]
         if len(possible_results) == 1:
@@ -154,8 +161,8 @@ class State:
     def is_reachable_shelter(self, v):
         return self.is_reachable(v) and v.is_shelter()
 
-    def get_transition_evacuees_state(self, v):
-        current = self.evacuees_state
+    def get_transition_pickup_state(self, v):
+        current = self.pickup_state
         # v can be evacuated
         if v in self.state_space.node_to_index:
             new_state = list(current)
@@ -183,7 +190,7 @@ class State:
     def get_transition_saved_state(self, v: EvacuateNode):
         # a node is saved (True) if it was previously saved or if we arrive a shelter while carrying its people.
         if self.is_reachable_shelter(v):
-            return tuple(saved or carrying for saved, carrying in zip(self.saved_state, self.carrying_state))
+            return tuple((saved or carrying) for saved, carrying in zip(self.saved_state, self.carrying_state))
         return self.saved_state
 
     def path_unblocked(self, v):
@@ -195,8 +202,7 @@ class State:
             return True
         edge_blocked = self.block_states[idx]
         if edge_blocked == UNKNOWN:
-            # state cannot be reached, so it's a don'tcare
-            # raise('block state undetermined before traversal!')
+            # state cannot be reached, so it's a don't-care
             return False
         return edge_blocked is False
 
@@ -211,9 +217,10 @@ class State:
             # deterministic successor state - no change in knowledge about edge blockage
             return [(1, self.block_states)]
         # get probability of blocked/ unblocked state combinations for each road connected to v
-        for possible_assignment in get_all_options([True,False], len(determined_indices)):
+        for possible_assignment in get_all_options([True, False], len(determined_indices)):
             prob = 1
             option = current[:]
+            # calculate the overall probability of a specific outcome by multiplying blocked/unblocked probabilities
             for edge_idx_p, edge_blocked in zip(determined_indices, possible_assignment):
                 idx, p = edge_idx_p
                 option[idx] = edge_blocked
@@ -225,30 +232,27 @@ class State:
         return new_state_possibilities
 
     def terminated_transition(self):
-        return self.state_space.get_state((self.loc, self.evacuees_state, self.block_states, self.carrying_state, self.saved_state, self.time, True))
+        return self.state_space.get_state((self.loc, self.pickup_state, self.block_states, self.carrying_state, self.saved_state, self.time, True))
 
     def get_transitions(self):
         transitions = {}
         if self.terminated:
             return transitions
         u = self.loc
-        transitions['TERMINATE'] = [(1, self.terminated_transition())]
+        transitions[TERMINATE] = [(1, self.terminated_transition())]
         # for every unblocked road to neighbour, add all the possible transitions and their probabilities
         for v in self.state_space.G.neighbours(u):
             if self.path_unblocked(v):
                 if self.is_reachable(v):
                     e = self.state_space.G.get_edge(u, v)
                     transitions[v] = []
-                    new_evacuees_state = self.get_transition_evacuees_state(v)
-
-                    if repr(self) == "('V5', 'P:[V3:T, V4:T]', 'B:[E3:F]', 'C:[V3:F, V4:F]', 'S:[V3:T, V4:T]', 't=7', 'T:F', 'EU=-0.1')":
-                        print(d(False))
+                    new_pickup_state = self.get_transition_pickup_state(v)
                     new_carrying_state = self.get_transition_carrying_state(v)
                     new_saved_state = self.get_transition_saved_state(v)
                     # get probability of blocked/ unblocked state combinations for each road connected to v
                     for prob, block_state_possibility in self.get_transition_blocked_state(v):
                         key = (v,
-                               new_evacuees_state,
+                               new_pickup_state,
                                block_state_possibility,
                                new_carrying_state,
                                new_saved_state,
@@ -258,7 +262,7 @@ class State:
                         transitions[v].append((prob, result_state))
                 else:
                     # if cannot reach destination before deadline, terminate.
-                    transitions[v] = transitions['TERMINATE']
+                    transitions[v] = transitions[TERMINATE]
         return transitions
 
     def reward(self):
@@ -279,3 +283,81 @@ class State:
                 best_action = action
         return best_action, best_score
 
+
+class BeliefStateSpace:
+    def __init__(self, G: Graph):
+        self.G = G
+        self.STATES: Dict[State, State] = {}
+        self.evac_nodes = G.get_evac_nodes()
+        self.blockable_edges = G.get_blockable_edges()
+        self.node_to_index = {v: i for i, v in enumerate(self.evac_nodes)}
+        self.edge_to_index = {e: i for i, e in enumerate(self.blockable_edges)}
+
+        n_evacuate_nodes = len(self.evac_nodes)
+        n_blockable_edges = len(self.blockable_edges)
+        max_deadline = self.G.get_max_deadline() + 1
+
+        # Creating all the states in the State Space: order matters!
+        # For each time unit up to max deadline (in REVERSE order):
+        # first generate the states where the agent is terminated, then the ones where it is active.
+        # This is similar to dynamic programming cache - the transitions from each state result in states
+        # that have already been created, with their expected utility calculated
+
+        def is_legal_state(pickup_state, carrying_state, saved_state, block_states):
+            illegal_false_pickup = any(
+                [((not pu) and (c or s)) for pu, c, s in zip(pickup_state, carrying_state, saved_state)])
+            illegal_unknown_edge = any([(e.contains(loc) and (e_blocked is UNKNOWN)) for e, e_blocked in
+                                        zip(self.blockable_edges, block_states)])
+            return not (illegal_false_pickup or illegal_unknown_edge)
+
+        for t in reversed(range(max_deadline)):  # for each time unit in reverse order
+            for term in [True, False]:  # first terminated states, then active states
+                for loc in G.get_vertices():
+                    for pickup_state in get_all_options([True, False], n_evacuate_nodes):
+                        for block_states in get_all_options([True, False, UNKNOWN], n_blockable_edges):
+                            for carrying_state in get_all_options([True, False], n_evacuate_nodes):
+                                for saved_state in get_all_options([True, False], n_evacuate_nodes):
+                                    # skip illegal states
+                                    if is_legal_state(pickup_state, carrying_state, saved_state, block_states):
+                                        s = State(self, loc, pickup_state, block_states, carrying_state, saved_state, t,
+                                                  term)
+                                        self.register_state(s)
+
+    def register_state(self, state):
+        self.STATES[state] = state
+
+    def get_state(self, state):
+        return self.STATES[state]
+
+    def get_initial_state(self, loc):
+        n_blockable = len(self.blockable_edges)
+        n_saveable = len(self.evac_nodes)
+        p = (False,) * n_saveable
+        e = (UNKNOWN,) * n_blockable
+        return self.get_state((loc, p, e, p, p, 0, False))
+
+    def display_policy(self, initial_state: State):
+        V, E = [], []
+        root = ID(initial_state.compact())
+        Q = [(initial_state, root)]
+        L = {}
+        B = set([])
+        while len(Q) > 0:
+            state, state_node = Q.pop()
+            for action, results in state.transitions.items():
+                action_expected_util = sum([p * st.expected_utility for p, st in results])
+                a = ID((action or 'T', round(action_expected_util, 2)))
+                V.append(a)
+                E.append((state_node, a))
+                if action == state.best_option:
+                    B.add(a)
+                else:  # comment this else block to view all reachable states
+                    continue
+                for p, result in results:
+                    s = ID(result.compact())
+                    Q.append((result, s))
+                    V.append(s)
+                    e = (a, s)
+                    E.append(e)
+                    L[e] = p
+        tree.display_tree(root, V, E, L, B)

@@ -2,7 +2,6 @@ import re
 import argparse
 from agent import Agent
 from graph import Edge, Graph, ShelterNode, EvacuateNode
-from search_agents import State, BeliefStateSpace
 
 
 class Simulator:
@@ -77,11 +76,11 @@ class Simulator:
         self.agent.create_policy()
         self.agent.apply_policy()
 
+
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='''
             The Hurricane Evacuation Problem - Decision-making under uncertainty
-            example: python3 hurricane_simulator.py --graph_path tests/basic.config --seed 3''')
+            example: python3 hurricane_simulator.py --graph_path tests/basic.config''')
     parser.add_argument('-g', '--graph_path', default='tests/test.config', help='path to graph initial configuration')
-    parser.add_argument('-s', '--seed', default=42, type=int, help='random seed for the sampling. Used for debugging')
     args = parser.parse_args()
     Simulator(args.graph_path).run_simulation()

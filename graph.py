@@ -48,11 +48,9 @@ class Edge:
 
     def __lt__(self, other):
         return self.label < other.label
-        # return (self.v1, self.v2) < (other.v1, other.v2)
 
     def __str__(self):
         return self.label
-        # return str((self.v1.label, self.v2.label, self.w))
 
     def __repr__(self):
         return '({},{})'.format(self.v1.label, self.v2.label)
@@ -147,7 +145,6 @@ class Graph:
 
     def get_max_deadline(self):
         return max([v.deadline for v in self.get_vertices()])
-
 
 
 class EvacuateNode(Node):

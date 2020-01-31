@@ -1,5 +1,5 @@
 from graph import EvacuateNode, Graph
-from search_agents import BeliefStateSpace, State
+from state import BeliefStateSpace, State
 
 
 class Agent:
@@ -29,6 +29,8 @@ class Agent:
     def create_policy(self):
         self.state_space = BeliefStateSpace(self.G)
         self.state = self.state_space.get_initial_state(self.loc)
+        self.state_space.display_policy(self.state)
+
 
     def apply_policy(self):
         while self.state.best_option is not None:
