@@ -1,6 +1,20 @@
 # Introduction to Artificial Inteligence
 ## Programming assignment 4 - Decision-making under uncertainty
-###Hurricane Evacuation Problem
+### Hurricane Evacuation Problem
+#### How to run
+```
+python3 hurricane_simulator.py -h
+usage: python3 hurricane_simulator.py [-h] [-g GRAPH_PATH]
+
+The Hurricane Evacuation Problem - Decision-making under uncertainty example:
+python3 hurricane_simulator.py --graph_path tests/basic.config
+
+optional arguments:
+  -h, --help            show this help message and exit
+  -g GRAPH_PATH, --graph_path GRAPH_PATH
+                        path to graph initial configuration
+```
+
 #### Goals
 Sequential decision making under uncertainty using belief-state MDP for decision-making: the Hurricane Evacuation problem. (This is an obscure variant of the Canadian traveler problem.)
 
