@@ -12,6 +12,8 @@ DECIMALS = 4
 Action = Union[EvacuateNode, TERMINATE]
 Ternary = Union[bool, UNKNOWN]
 
+# Auxiliary methods #
+
 
 def to_base(n, base):
     return "0" if not n else to_base(n // base, base).lstrip("0") + CHARS[n % base]
@@ -38,6 +40,7 @@ def vectorize(func):
             output = func(*args)
         return output
     return inner
+
 
 @vectorize
 def d(v):
@@ -283,8 +286,17 @@ class State:
                 best_action = action
         return best_action, best_score
 
+    def describe(self):
+        print(self)
+        for action, results in self.transitions.items():
+            action_expected_util = sum([p * st.expected_utility for p, st in results])
+            print('\tEU[{}]={:.2f}'.format(action or 'TERMINATE', action_expected_util))
+
 
 class BeliefStateSpace:
+    """This class represents an agent's belief-state space and is used to devise and follow a policy
+    given a physical initial state i.e. graph"""
+
     def __init__(self, G: Graph):
         self.G = G
         self.STATES: Dict[State, State] = {}
@@ -359,5 +371,5 @@ class BeliefStateSpace:
                     V.append(s)
                     e = (a, s)
                     E.append(e)
-                    L[e] = p
+                    L[e] = round(p, 2)
         tree.display_tree(root, V, E, L, B)

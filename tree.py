@@ -15,7 +15,7 @@ def display_tree(root, V, E, edge_labels={}, best=set([])):
     nx.draw(G, pos=pos, with_labels=True, font_size=6, node_color=color_map, node_size=1000, node_shape='s')
     if edge_labels:
         nx.draw_networkx_edge_labels(G, pos, edge_labels, rotate=False, font_size=6)
-    # plt.legend([], title="Minimax Tree", loc='upper left')
+    # plt.legend([], title="Agent's Policy", loc='upper left')
     plt.show()
 
 

@@ -33,10 +33,11 @@ class Agent:
 
 
     def apply_policy(self):
+        self.state.describe()
         while self.state.best_option is not None:
             best_action = self.state.best_option
             self.state = self.state.get_action_result(best_action)
-            print(self.state)
+            self.state.describe()
             self.apply_state()
             self.G.display('T={}'.format(self.state.time))
 

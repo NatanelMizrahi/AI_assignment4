@@ -12,7 +12,8 @@ class Simulator:
         self.agent: Agent = None
         self.G, self.agent = self.parse_graph(graph_path)
 
-    def parse_graph(self, path):
+    @staticmethod
+    def parse_graph(path):
         """Parse and create graph from tests file, syntax same as in assignment instructions"""
         num_v_pattern = re.compile("#N\s+(\d+)")
         start_pattern = re.compile("#Start\s+(\d+)")
@@ -81,6 +82,6 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='''
             The Hurricane Evacuation Problem - Decision-making under uncertainty
             example: python3 hurricane_simulator.py --graph_path tests/basic.config''')
-    parser.add_argument('-g', '--graph_path', default='tests/test.config', help='path to graph initial configuration')
+    parser.add_argument('-g', '--graph_path', default='tests/2_blocks_play_safe.config', help='path to graph initial configuration')
     args = parser.parse_args()
     Simulator(args.graph_path).run_simulation()
