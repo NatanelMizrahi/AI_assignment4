@@ -45,6 +45,9 @@ class Agent:
             self.apply_state()
             self.G.display('T={}'.format(self.state.time))
 
+
+
+
     def summary(self):
         terminate_string = '[${}]'.format(self.n_saved) if self.terminated else ''
         return '{0.name}|{0.loc}|S{0.n_saved}|C{0.n_carrying}'.format(self) + terminate_string
