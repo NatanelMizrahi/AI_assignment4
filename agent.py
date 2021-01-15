@@ -14,6 +14,10 @@ class Agent:
         self.G = G
         self.state: State = None
         self.state_space: BeliefStateSpace = None
+        self.start_loc = start_loc
+        self.print_agent_created(start_loc)
+
+    def print_agent_created(self, start_loc):
         print("Agent {} created in {}".format(self.name, start_loc))
 
     def apply_state(self):
